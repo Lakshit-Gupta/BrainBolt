@@ -176,7 +176,7 @@ export default function Page() {
           </p>
         </div>
 
-        <div className="fixed top-4 right-4">
+        <div style={{ position: 'absolute', top: '1rem', right: '1rem' }}>
           <ThemeToggle />
         </div>
       </div>

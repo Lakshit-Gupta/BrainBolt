@@ -23,6 +23,7 @@ export default function RootLayout({
         style={{
           backgroundColor: 'var(--color-bg-primary)',
           color: 'var(--color-text-primary)',
+          transition: 'background-color 200ms ease, color 200ms ease',
         }}
       >
         {children}

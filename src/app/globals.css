@@ -53,6 +53,16 @@
     --font-size-2xl: 1.5rem;
     --font-size-3xl: 1.875rem;
   }
+
+  html:not(.dark) {
+    --color-bg-primary: #f8fafc;
+    --color-bg-surface: #ffffff;
+    --color-bg-elevated: #f1f5f9;
+    --color-border: #e2e8f0;
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-muted: #94a3b8;
+  }
 }
 
 @layer components {
