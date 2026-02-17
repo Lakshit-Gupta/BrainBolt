@@ -19,7 +19,11 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body
-        className={`${inter.variable} font-sans bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 min-h-screen`}
+        className={`${inter.variable} font-sans min-h-screen`}
+        style={{
+          backgroundColor: 'var(--color-bg-primary)',
+          color: 'var(--color-text-primary)',
+        }}
       >
         {children}
       </body>
