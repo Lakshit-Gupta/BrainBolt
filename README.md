@@ -9,7 +9,7 @@ docker-compose up --build
 Then open **[http://localhost:3000](http://localhost:3000)**
 
 ##  Demo
-▶ Watch the working demo here:
+ Watch the working demo here:
 Will Update Soon
 [Watch Demo on YouTube](https://youtu.be/[])
 
