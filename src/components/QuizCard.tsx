@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
+import { Button, Card, Badge, SkeletonCard } from "@/components/ui";
 
 interface Question {
   id: string;
@@ -23,11 +24,13 @@ interface FeedbackData {
   scoreDelta: number;
 }
 
-export default function QuizCard({
+function QuizCard({
   userId,
+  token,
   onStatsUpdate,
 }: {
   userId: string;
+  token: string;
   onStatsUpdate: (stats: StatsData) => void;
 }) {
   const [question, setQuestion] = useState<Question | null>(null);
@@ -37,11 +40,16 @@ export default function QuizCard({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState("");
+  const [stateVersion, setStateVersion] = useState(0);
 
   const fetchQuestion = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/quiz/next?userId=${encodeURIComponent(userId)}`)
+    fetch(`/api/v1/quiz/next`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`Failed to load question (${res.status})`);
         return res.json();
@@ -49,6 +57,7 @@ export default function QuizCard({
       .then((data) => {
         setQuestion(data.question);
         setIdempotencyKey(crypto.randomUUID());
+        setStateVersion(data.stateVersion || 0);
         if (data.userState) {
           onStatsUpdate({
             score: data.userState.totalScore,
@@ -63,26 +72,32 @@ export default function QuizCard({
         setError(err.message);
         setLoading(false);
       });
-  }, [userId, onStatsUpdate]);
+  }, [token, onStatsUpdate]);
 
   useEffect(() => {
     fetchQuestion();
   }, [fetchQuestion]);
 
-  const submitAnswer = () => {
+  const submitAnswer = useCallback(() => {
     if (question && selectedIndex !== null && !submitting) {
       setSubmitting(true);
-      fetch("/api/quiz/answer", {
+      fetch("/api/v1/quiz/answer", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
-          userId,
           questionId: question.id,
           selectedIndex,
           idempotencyKey,
+          stateVersion,
         }),
       })
         .then((res) => {
+          if (res.status === 409) {
+            throw new Error("State out of sync, refreshing...");
+          }
           if (!res.ok)
             throw new Error(`Failed to submit answer (${res.status})`);
           return res.json();
@@ -93,6 +108,7 @@ export default function QuizCard({
             correctIndex: data.correctIndex,
             scoreDelta: data.scoreDelta,
           });
+          setStateVersion(data.stateVersion || 0);
           onStatsUpdate({
             score: data.userState.totalScore,
             streak: data.userState.streak,
@@ -109,123 +125,130 @@ export default function QuizCard({
         .catch((err) => {
           setError(err.message);
           setSubmitting(false);
+          if (err.message.includes("State out of sync")) {
+            setTimeout(() => {
+              setError(null);
+              fetchQuestion();
+            }, 1000);
+          }
         });
     }
-  };
+  }, [question, selectedIndex, submitting, token, idempotencyKey, stateVersion, onStatsUpdate, fetchQuestion]);
+
+  const handleAnswer = useCallback((index: number) => {
+    if (!feedback) {
+      setSelectedIndex(index);
+    }
+  }, [feedback]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent, index: number) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleAnswer(index);
+    }
+  }, [handleAnswer]);
 
   const optionLabels = ["A", "B", "C", "D"];
 
   if (loading) {
-    return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="flex justify-between">
-            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-24" />
-            <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-16" />
-          </div>
-          <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mt-6" />
-          <div className="space-y-3 mt-6">
-            {[1, 2, 3, 4].map((i) => (
-              <div
-                key={i}
-                className="h-12 bg-slate-200 dark:bg-slate-700 rounded-lg"
-              />
-            ))}
-          </div>
-          <div className="h-10 bg-slate-200 dark:bg-slate-700 rounded-lg mt-4" />
-        </div>
-      </div>
-    );
+    return <SkeletonCard />;
   }
 
   if (error) {
     return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg p-6">
+      <Card>
         <div className="text-center py-8">
-          <p className="text-red-500 dark:text-red-400 mb-4">{error}</p>
-          <button
+          <p className="text-bb-error mb-4">{error}</p>
+          <Button
             onClick={() => {
               setError(null);
               fetchQuestion();
             }}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
           >
             Retry
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
     );
   }
 
   if (!question) {
     return (
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg p-6">
+      <Card>
         <div className="text-center py-8">
-          <p className="text-slate-500 dark:text-slate-400">
+          <p className="text-bb-muted">
             No questions available at this difficulty level.
           </p>
-          <button
-            onClick={fetchQuestion}
-            className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
-          >
+          <Button onClick={fetchQuestion} className="mt-4">
             Try Again
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg">
+    <Card aria-busy={loading}>
       {/* Card Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">
+      <div className="flex items-center justify-between mb-6 pb-4 border-b border-bb-border">
+        <span className="text-bb-sm font-medium text-bb-muted">
           {question.category}
         </span>
-        <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-400/10 px-2.5 py-1 rounded-full">
+        <Badge variant="accent">
           Level {question.difficulty}
-        </span>
+        </Badge>
       </div>
 
       {/* Question Body */}
-      <div className="p-6">
-        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-50 mb-6">
+      <div>
+        <h2
+          className="text-bb-xl font-semibold text-bb-text mb-6"
+          aria-live="polite"
+        >
           {question.text}
         </h2>
 
         {/* Answer Choices */}
-        <div className="space-y-3">
+        <div
+          role="listbox"
+          aria-label="Answer choices"
+          className="space-y-3"
+        >
           {question.choices.map((choice, index) => {
             let buttonClass =
-              "w-full flex items-center gap-3 px-4 py-3 rounded-lg border text-left transition-colors ";
+              "w-full flex items-center gap-3 px-4 py-3 rounded-bb-md border text-left transition-all focus:outline-none focus:ring-2 focus:ring-bb-accent ";
 
             if (feedback) {
               if (index === feedback.correctIndex) {
                 buttonClass +=
-                  "border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400";
+                  "border-bb-success bg-green-900/20 text-bb-success";
               } else if (index === selectedIndex && !feedback.correct) {
                 buttonClass +=
-                  "border-red-500 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400";
+                  "border-bb-error bg-red-900/20 text-bb-error";
               } else {
                 buttonClass +=
-                  "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500";
+                  "border-bb-border bg-bb-elevated text-bb-muted opacity-50";
               }
             } else if (index === selectedIndex) {
               buttonClass +=
-                "border-indigo-500 bg-indigo-50 dark:bg-indigo-500/10 text-slate-900 dark:text-slate-50";
+                "border-bb-accent bg-indigo-900/20 text-bb-text ring-2 ring-bb-accent";
             } else {
               buttonClass +=
-                "border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800";
+                "border-bb-border bg-bb-elevated text-bb-text hover:border-bb-accent hover:bg-bb-surface cursor-pointer";
             }
 
             return (
               <button
                 key={index}
+                role="option"
+                aria-selected={selectedIndex === index}
+                tabIndex={0}
                 className={buttonClass}
-                onClick={() => !feedback && setSelectedIndex(index)}
+                onClick={() => handleAnswer(index)}
+                onKeyDown={(e) => handleKeyDown(e, index)}
                 disabled={!!feedback}
               >
-                <span className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 text-xs font-medium text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-600">
+                <span className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-md bg-bb-bg text-bb-xs font-medium text-bb-muted border border-bb-border">
                   {optionLabels[index]}
                 </span>
                 <span className="font-medium">{choice}</span>
@@ -236,23 +259,25 @@ export default function QuizCard({
 
         {/* Submit Button */}
         {!feedback && (
-          <button
+          <Button
             onClick={submitAnswer}
             disabled={selectedIndex === null || submitting}
-            className="w-full mt-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 text-white font-medium rounded-lg transition-colors"
+            loading={submitting}
+            className="w-full mt-6"
           >
-            {submitting ? "Submitting..." : "Submit Answer"}
-          </button>
+            Submit Answer
+          </Button>
         )}
 
         {/* Feedback */}
         {feedback && (
           <div
-            className={`mt-6 px-4 py-3 rounded-lg border ${
-              feedback.correct
-                ? "border-green-200 dark:border-green-500/30 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400"
-                : "border-red-200 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400"
-            }`}
+            role="alert"
+            aria-live="assertive"
+            className={`mt-6 px-4 py-3 rounded-bb-md border ${feedback.correct
+                ? "border-bb-success bg-green-900/20 text-bb-success"
+                : "border-bb-error bg-red-900/20 text-bb-error"
+              }`}
           >
             <p className="font-medium">
               {feedback.correct
@@ -262,6 +287,8 @@ export default function QuizCard({
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
+
+export default memo(QuizCard);

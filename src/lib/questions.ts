@@ -2,6 +2,8 @@
 // 20 seed questions across difficulty tiers 1–10.
 // Categories: Science, Math, History, Geography, Tech.
 
+import { createHash } from 'crypto';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface Question {
@@ -11,6 +13,16 @@ export interface Question {
   correctIndex: number;
   difficulty: number; // 1–10
   category: string;
+  correctAnswerHash: string;
+}
+
+// ─── Hash Helper ────────────────────────────────────────────────────────────
+
+function hashCorrectIndex(index: number): string {
+  return createHash('sha256')
+    .update(String(index))
+    .digest('hex')
+    .substring(0, 16);
 }
 
 // ─── Seed Data ──────────────────────────────────────────────────────────────
@@ -24,6 +36,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 1,
     category: "Science",
+    correctAnswerHash: hashCorrectIndex(1),
   },
   {
     id: "q2",
@@ -32,6 +45,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 1,
     category: "Math",
+    correctAnswerHash: hashCorrectIndex(2),
   },
 
   // ── Difficulty 2 ──
@@ -42,6 +56,7 @@ const questions: Question[] = [
     correctIndex: 3,
     difficulty: 2,
     category: "Geography",
+    correctAnswerHash: hashCorrectIndex(3),
   },
   {
     id: "q4",
@@ -50,6 +65,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 2,
     category: "History",
+    correctAnswerHash: hashCorrectIndex(1),
   },
 
   // ── Difficulty 3 ──
@@ -60,6 +76,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 3,
     category: "Science",
+    correctAnswerHash: hashCorrectIndex(1),
   },
   {
     id: "q6",
@@ -68,6 +85,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 3,
     category: "Math",
+    correctAnswerHash: hashCorrectIndex(2),
   },
 
   // ── Difficulty 4 ──
@@ -78,6 +96,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 4,
     category: "Geography",
+    correctAnswerHash: hashCorrectIndex(2),
   },
   {
     id: "q8",
@@ -91,6 +110,7 @@ const questions: Question[] = [
     correctIndex: 0,
     difficulty: 4,
     category: "Tech",
+    correctAnswerHash: hashCorrectIndex(0),
   },
 
   // ── Difficulty 5 ──
@@ -101,6 +121,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 5,
     category: "Science",
+    correctAnswerHash: hashCorrectIndex(2),
   },
   {
     id: "q10",
@@ -109,6 +130,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 5,
     category: "History",
+    correctAnswerHash: hashCorrectIndex(1),
   },
 
   // ── Difficulty 6 ──
@@ -119,6 +141,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 6,
     category: "Math",
+    correctAnswerHash: hashCorrectIndex(1),
   },
   {
     id: "q12",
@@ -127,6 +150,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 6,
     category: "Tech",
+    correctAnswerHash: hashCorrectIndex(2),
   },
 
   // ── Difficulty 7 ──
@@ -137,6 +161,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 7,
     category: "Geography",
+    correctAnswerHash: hashCorrectIndex(1),
   },
   {
     id: "q14",
@@ -145,6 +170,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 7,
     category: "Science",
+    correctAnswerHash: hashCorrectIndex(1),
   },
 
   // ── Difficulty 8 ──
@@ -155,6 +181,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 8,
     category: "Tech",
+    correctAnswerHash: hashCorrectIndex(2),
   },
   {
     id: "q16",
@@ -163,6 +190,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 8,
     category: "Science",
+    correctAnswerHash: hashCorrectIndex(2),
   },
 
   // ── Difficulty 9 ──
@@ -173,6 +201,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 9,
     category: "Math",
+    correctAnswerHash: hashCorrectIndex(1),
   },
   {
     id: "q18",
@@ -186,6 +215,7 @@ const questions: Question[] = [
     correctIndex: 2,
     difficulty: 9,
     category: "History",
+    correctAnswerHash: hashCorrectIndex(2),
   },
 
   // ── Difficulty 10 ──
@@ -201,6 +231,7 @@ const questions: Question[] = [
     correctIndex: 1,
     difficulty: 10,
     category: "Tech",
+    correctAnswerHash: hashCorrectIndex(1),
   },
   {
     id: "q20",
@@ -209,6 +240,7 @@ const questions: Question[] = [
     correctIndex: 0,
     difficulty: 10,
     category: "Math",
+    correctAnswerHash: hashCorrectIndex(0),
   },
 ];
 

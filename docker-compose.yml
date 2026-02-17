@@ -1,7 +1,39 @@
 version: '3.8'
 
 services:
-  brainbolt:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  scoring:
+    build:
+      context: ./scoring-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  app:
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,4 +41,14 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - SCORING_SERVICE_URL=http://scoring:8000
+    depends_on:
+      redis:
+        condition: service_healthy
+      scoring:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  redis_data:

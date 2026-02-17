@@ -1,16 +1,35 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import dynamic from "next/dynamic";
 import QuizCard from "../components/QuizCard";
-import Leaderboard from "../components/Leaderboard";
-import ThemeToggle from "../components/ThemeToggle";
 import StatsBar from "../components/StatsBar";
+import { Skeleton, Input, Button } from "@/components/ui";
+
+const Leaderboard = dynamic(() => import("../components/Leaderboard"), {
+  ssr: false,
+  loading: () => (
+    <div className="space-y-3">
+      <Skeleton className="h-8 w-full" />
+      {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+    </div>
+  ),
+});
+
+const ThemeToggle = dynamic(() => import("../components/ThemeToggle"), {
+  ssr: false,
+  loading: () => <div className="w-9 h-9" />,
+});
 
 export default function Page() {
   const [sessionId, setSessionId] = useState("");
   const [userId, setUserId] = useState("");
+  const [username, setUsername] = useState("");
+  const [token, setToken] = useState("");
   const [quizStarted, setQuizStarted] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState("");
   const [stats, setStats] = useState({
     score: 0,
     streak: 0,
@@ -20,19 +39,71 @@ export default function Page() {
 
   useEffect(() => {
     setSessionId(crypto.randomUUID());
+
+    // Check for existing token in localStorage
+    const storedToken = localStorage.getItem("brainbolt_token");
+    const storedUserId = localStorage.getItem("brainbolt_userId");
+    const storedUsername = localStorage.getItem("brainbolt_username");
+
+    if (storedToken && storedUserId && storedUsername) {
+      setToken(storedToken);
+      setUserId(storedUserId);
+      setUsername(storedUsername);
+      setQuizStarted(true);
+    }
   }, []);
 
-  const startQuiz = () => {
-    if (userId.trim()) {
+  const handleLogin = async () => {
+    if (!username.trim()) return;
+
+    setIsLoggingIn(true);
+    setLoginError("");
+
+    try {
+      const response = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username: username.trim() }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Login failed");
+      }
+
+      const data = await response.json();
+
+      // Store auth data
+      localStorage.setItem("brainbolt_token", data.token);
+      localStorage.setItem("brainbolt_userId", data.userId);
+      localStorage.setItem("brainbolt_username", data.username);
+
+      setToken(data.token);
+      setUserId(data.userId);
+      setUsername(data.username);
       setQuizStarted(true);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Login failed");
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
-      startQuiz();
+      handleLogin();
     }
   };
+
+  // Memoize the stats object to prevent unnecessary re-renders
+  const memoizedStats = useMemo(() => stats, [stats.score, stats.streak, stats.difficulty, stats.maxStreak]);
+
+  // Wrap onStatsUpdate with useCallback to prevent re-renders
+  const handleStatsUpdate = useCallback((newStats: typeof stats) => {
+    setStats(newStats);
+  }, []);
 
   if (!quizStarted) {
     return (
@@ -49,32 +120,27 @@ export default function Page() {
             </div>
 
             <div className="space-y-4">
-              <div>
-                <label
-                  htmlFor="name"
-                  className="block text-sm font-medium text-slate-500 dark:text-slate-400 mb-1.5"
-                >
-                  Your Name
-                </label>
-                <input
-                  id="name"
-                  type="text"
-                  placeholder="Enter your name"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full px-4 py-2.5 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-50 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-colors"
-                  autoFocus
-                />
-              </div>
+              <Input
+                id="username"
+                label="Username"
+                type="text"
+                placeholder="Enter username (letters, numbers, underscore)"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={handleKeyDown}
+                autoFocus
+                disabled={isLoggingIn}
+                error={loginError}
+              />
 
-              <button
-                onClick={startQuiz}
-                disabled={!userId.trim()}
-                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 text-white font-medium rounded-lg transition-colors"
+              <Button
+                onClick={handleLogin}
+                disabled={!username.trim() || isLoggingIn}
+                loading={isLoggingIn}
+                className="w-full"
               >
-                Start Quiz
-              </button>
+                Start Playing
+              </Button>
             </div>
 
             <div className="mt-8 grid grid-cols-3 gap-4 text-center">
@@ -127,7 +193,7 @@ export default function Page() {
           </h1>
           <div className="flex items-center gap-3">
             <span className="text-sm text-slate-500 dark:text-slate-400">
-              {userId}
+              {username}
             </span>
             <ThemeToggle />
           </div>
@@ -137,10 +203,10 @@ export default function Page() {
       {/* Stats Bar */}
       <div className="max-w-7xl mx-auto px-4 py-4">
         <StatsBar
-          score={stats.score}
-          streak={stats.streak}
-          difficulty={stats.difficulty}
-          maxStreak={stats.maxStreak}
+          score={memoizedStats.score}
+          streak={memoizedStats.streak}
+          difficulty={memoizedStats.difficulty}
+          maxStreak={memoizedStats.maxStreak}
         />
       </div>
 
@@ -159,19 +225,19 @@ export default function Page() {
         {/* Mobile leaderboard (collapsible, below md only) */}
         {showLeaderboard && (
           <div className="md:hidden mb-6">
-            <Leaderboard userId={userId} />
+            <Leaderboard userId={userId} token={token} />
           </div>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Quiz Card */}
           <div className="lg:col-span-2">
-            <QuizCard userId={userId} onStatsUpdate={setStats} />
+            <QuizCard userId={userId} token={token} onStatsUpdate={handleStatsUpdate} />
           </div>
 
           {/* Leaderboard: bottom panel on tablet (md), side panel on desktop (lg) */}
           <div className="hidden md:block">
-            <Leaderboard userId={userId} />
+            <Leaderboard userId={userId} token={token} />
           </div>
         </div>
       </main>

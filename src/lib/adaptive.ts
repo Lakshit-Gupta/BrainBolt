@@ -2,18 +2,72 @@
 // Implements hysteresis-based difficulty adjustment, score calculation,
 // and question selection per LLD §6-7.
 
+import { createHash } from 'crypto';
 import {
   type UserState,
   type AnswerResponse,
+  type AnswerLog,
   getOrCreateUser,
   pushRecentResult,
   markQuestionAnswered,
   clearAnsweredIds,
   updateUser,
   toPublicUserState,
+  logAnswer,
+  saveUser,
 } from "./store";
 
 import { getQuestionById, type Question, getAllQuestions } from "./questions";
+import { nanoid } from "nanoid";
+
+// ─── IRT Scoring Service Integration ───────────────────────────────────────
+
+interface IRTScoreResult {
+  scoreDelta: number;
+  newTheta: number;
+  thetaDelta: number;
+  irtProbability: number;
+  eloExpected: number;
+  streakMultiplier: number;
+  accuracyFactor: number;
+  breakdown: Record<string, number>;
+}
+
+/**
+ * Call the Python IRT scoring service to compute adaptive score.
+ * Falls back to null if service is unavailable.
+ */
+async function getIRTScore(
+  userId: string,
+  difficulty: number,
+  correct: boolean,
+  streak: number,
+  totalAnswers: number,
+  recentResults: boolean[]
+): Promise<IRTScoreResult | null> {
+  const scoringUrl = process.env.SCORING_SERVICE_URL || 'http://localhost:8000';
+  try {
+    const response = await fetch(`${scoringUrl}/score`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        difficulty,
+        correct,
+        streak,
+        totalAnswers,
+        recentResults,
+      }),
+      signal: AbortSignal.timeout(3000), // 3s timeout
+    });
+
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (err) {
+    console.error('[IRT] Scoring service unavailable, using fallback:', err);
+    return null;
+  }
+}
 
 // ─── Rolling Accuracy ───────────────────────────────────────────────────────
 
@@ -54,11 +108,11 @@ function calculateScore(user: UserState): number {
  * Returns an AnswerResponse with correct flag, score delta,
  * revealed correct index, and updated public user state.
  */
-export function processAnswer(
+export async function processAnswer(
   userId: string,
   questionId: string,
   selectedIndex: number
-): AnswerResponse {
+): Promise<AnswerResponse> {
   const question = getQuestionById(questionId);
   if (!question) {
     throw new Error(`Question not found: ${questionId}`);
@@ -68,9 +122,17 @@ export function processAnswer(
     throw new Error(`Invalid selectedIndex: ${selectedIndex}`);
   }
 
-  const user = getOrCreateUser(userId);
-  const correct = selectedIndex === question.correctIndex;
+  const user = await getOrCreateUser(userId);
+  
+  // Verify answer using hash
+  const expectedHash = createHash('sha256')
+    .update(String(selectedIndex))
+    .digest('hex')
+    .substring(0, 16);
+  const correct = expectedHash === question.correctAnswerHash;
+  
   let scoreDelta = 0;
+  let irtData: IRTScoreResult | null = null;
 
   if (correct) {
     // ── Streak ──
@@ -87,8 +149,23 @@ export function processAnswer(
     // ── Push result BEFORE calculating score so it's included in accuracy ──
     pushRecentResult(user, true);
 
-    // ── Score ──
-    scoreDelta = calculateScore(user);
+    // ── Score: try IRT service first, fallback to calculateScore ──
+    const totalAnswers = (user.recentResults?.length || 0) + 1;
+    irtData = await getIRTScore(
+      userId,
+      question.difficulty,
+      correct,
+      user.streak,
+      totalAnswers,
+      user.recentResults || []
+    );
+
+    if (irtData) {
+      scoreDelta = Math.round(irtData.scoreDelta);
+    } else {
+      // Fallback if Python service is down
+      scoreDelta = calculateScore(user);
+    }
     user.totalScore += scoreDelta;
   } else {
     // ── Streak hard reset ──
@@ -108,14 +185,36 @@ export function processAnswer(
   // Mark question as answered
   markQuestionAnswered(user, questionId);
 
-  // Persist
-  updateUser(user);
+  // Increment state version for optimistic locking
+  user.stateVersion += 1;
+  
+  // Update lastAnswerAt timestamp
+  user.lastAnswerAt = Date.now();
+
+  // Log answer
+  const answerLog: AnswerLog = {
+    id: nanoid(),
+    userId: user.userId,
+    questionId,
+    difficulty: question.difficulty,
+    answer: selectedIndex,
+    correct,
+    scoreDelta,
+    streakAtAnswer: user.streak,
+    answeredAt: Date.now(),
+  };
+
+  // Persist (do not await log to avoid blocking)
+  await updateUser(user);
+  logAnswer(answerLog); // Fire and forget
 
   return {
     correct,
     correctIndex: question.correctIndex,
     scoreDelta,
     userState: toPublicUserState(user),
+    stateVersion: user.stateVersion,
+    irtData: irtData || undefined,
   };
 }
 
@@ -135,6 +234,7 @@ export interface NextQuestionResult {
     totalScore: number;
     maxStreak: number;
   };
+  stateVersion: number;
 }
 
 /**
@@ -148,8 +248,23 @@ export interface NextQuestionResult {
  *
  * Returns null if absolutely no questions can be found.
  */
-export function getNextQuestion(userId: string): NextQuestionResult | null {
-  const user = getOrCreateUser(userId);
+export async function getNextQuestion(userId: string): Promise<NextQuestionResult | null> {
+  const user = await getOrCreateUser(userId);
+  
+  // ── Inactivity Check: Decay streak after 30 minutes of inactivity ──
+  const INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+  const now = Date.now();
+  if (user.lastAnswerAt && (now - user.lastAnswerAt) > INACTIVITY_THRESHOLD_MS) {
+    if (user.streak > 0) {
+      user.streak = Math.floor(user.streak / 2);
+      user.confidence = Math.max(0, user.confidence - 1);
+      // Log decay event
+      console.log(`[StreakDecay] userId=${userId} streak halved to ${user.streak}`);
+    }
+    user.lastAnswerAt = now;
+    await saveUser(user);
+  }
+  
   const allQuestions = getAllQuestions();
 
   // Helper: filter unanswered questions within a difficulty band
@@ -195,7 +310,7 @@ export function getNextQuestion(userId: string): NextQuestionResult | null {
 
   // Update last question tracking
   user.lastQuestionId = selected.id;
-  updateUser(user);
+  await updateUser(user);
 
   // Return question WITHOUT correctIndex (never sent to client)
   return {
@@ -212,5 +327,6 @@ export function getNextQuestion(userId: string): NextQuestionResult | null {
       totalScore: user.totalScore,
       maxStreak: user.maxStreak,
     },
+    stateVersion: user.stateVersion,
   };
 }

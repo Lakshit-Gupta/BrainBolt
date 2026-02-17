@@ -1,20 +1,29 @@
-// POST /api/quiz/answer
-// Process an answer submission with idempotency enforcement. Rate-limited.
+// POST /api/v1/quiz/answer
+// Process an answer submission with idempotency enforcement. Rate-limited. Requires auth.
 
 import { NextRequest, NextResponse } from "next/server";
+import { verifyAuth } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rateLimit";
-import { checkIdempotency, recordIdempotency } from "@/lib/store";
+import { checkIdempotency, recordIdempotency, getUser, getUserScoreRank, getUserStreakRank } from "@/lib/store";
 import { processAnswer } from "@/lib/adaptive";
 import { getQuestionById } from "@/lib/questions";
 
 interface AnswerRequestBody {
-  userId?: string;
   questionId?: string;
   selectedIndex?: number;
   idempotencyKey?: string;
+  stateVersion?: number;
+  sessionId?: string;
 }
 
 export async function POST(request: NextRequest) {
+  // Verify authentication
+  const auth = await verifyAuth(request.headers.get("Authorization"));
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const userId = auth.userId;
+
   let body: AnswerRequestBody;
 
   try {
@@ -26,10 +35,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { userId, questionId, selectedIndex, idempotencyKey } = body;
+  const { questionId, selectedIndex, idempotencyKey, stateVersion, sessionId } = body;
 
   // ── Validate required fields ──
-  if (!userId || !questionId || selectedIndex === undefined || !idempotencyKey) {
+  if (!questionId || selectedIndex === undefined || !idempotencyKey) {
     return NextResponse.json(
       { error: "Missing required fields" },
       { status: 400 }
@@ -77,7 +86,7 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Idempotency check ──
-  const cached = checkIdempotency(idempotencyKey);
+  const cached = await checkIdempotency(idempotencyKey);
   if (cached) {
     return NextResponse.json(
       { ...cached, idempotent: true },
@@ -89,14 +98,46 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ── State version check (optimistic locking) ──
+  if (stateVersion !== undefined) {
+    const user = await getUser(userId);
+    if (user && user.stateVersion !== stateVersion) {
+      return NextResponse.json(
+        {
+          error: "State version mismatch",
+          currentVersion: user.stateVersion
+        },
+        { status: 409 }
+      );
+    }
+  }
+
+  // ── Session ID validation (soft check with logging) ──
+  if (sessionId) {
+    const user = await getUser(userId);
+    if (user && user.sessionId && user.sessionId !== sessionId) {
+      console.warn(`[SessionMismatch] userId=${userId} expected=${user.sessionId} received=${sessionId}`);
+    }
+  }
+
   // ── Process answer through adaptive engine ──
-  const response = processAnswer(userId, questionId, selectedIndex);
+  const response = await processAnswer(userId, questionId, selectedIndex);
+
+  // ── Fetch leaderboard ranks ──
+  const leaderboardRankScore = await getUserScoreRank(userId);
+  const leaderboardRankStreak = await getUserStreakRank(userId);
 
   // ── Record idempotency ──
-  recordIdempotency(idempotencyKey, response);
+  await recordIdempotency(idempotencyKey, response);
 
   return NextResponse.json(
-    { ...response, idempotent: false },
+    { 
+      ...response, 
+      idempotent: false,
+      leaderboardRankScore,
+      leaderboardRankStreak,
+      sessionId: sessionId || null,
+    },
     {
       headers: {
         "X-RateLimit-Remaining": String(rateLimit.remaining),
