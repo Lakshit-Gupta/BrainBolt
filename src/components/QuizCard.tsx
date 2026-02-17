@@ -221,17 +221,17 @@ function QuizCard({
             if (feedback) {
               if (index === feedback.correctIndex) {
                 buttonClass +=
-                  "border-bb-success bg-green-900/20 text-bb-success";
+                  "bb-success-subtle border text-bb-success";
               } else if (index === selectedIndex && !feedback.correct) {
                 buttonClass +=
-                  "border-bb-error bg-red-900/20 text-bb-error";
+                  "bb-error-subtle border text-bb-error";
               } else {
                 buttonClass +=
                   "border-bb-border bg-bb-elevated text-bb-muted opacity-50";
               }
             } else if (index === selectedIndex) {
               buttonClass +=
-                "border-bb-accent bg-indigo-900/20 text-bb-text ring-2 ring-bb-accent";
+                "bb-accent-subtle text-bb-text ring-2 ring-bb-accent";
             } else {
               buttonClass +=
                 "border-bb-border bg-bb-elevated text-bb-text hover:border-bb-accent hover:bg-bb-surface cursor-pointer";
@@ -275,8 +275,8 @@ function QuizCard({
             role="alert"
             aria-live="assertive"
             className={`mt-6 px-4 py-3 rounded-bb-md border ${feedback.correct
-                ? "border-bb-success bg-green-900/20 text-bb-success"
-                : "border-bb-error bg-red-900/20 text-bb-error"
+                ? "bb-success-subtle text-bb-success"
+                : "bb-error-subtle text-bb-error"
               }`}
           >
             <p className="font-medium">

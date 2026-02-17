@@ -8,10 +8,10 @@ interface BadgeProps {
 
 const variantClasses = {
     default: 'bg-bb-elevated text-bb-muted border border-bb-border',
-    success: 'bg-green-900/50 text-bb-success border border-green-800',
-    error: 'bg-red-900/50 text-bb-error border border-red-800',
-    warning: 'bg-amber-900/50 text-amber-400 border border-amber-800',
-    accent: 'bg-indigo-900/50 text-bb-accent border border-indigo-700',
+    success: 'bb-success-subtle text-bb-success',
+    error: 'bb-error-subtle text-bb-error',
+    warning: 'bb-warning-subtle text-amber-400',
+    accent: 'bb-accent-subtle text-bb-accent',
 };
 
 export function Badge({ children, variant = 'default', className = '' }: BadgeProps) {

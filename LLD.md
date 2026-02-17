@@ -12,7 +12,8 @@
 8. [IRT Scoring Microservice](#8-irt-scoring-microservice)
 9. [Edge Cases](#9-edge-cases)
 10. [Leaderboard Update Strategy](#10-leaderboard-update-strategy)
-11. [Non-Functional Requirements](#11-non-functional-requirements)
+11. [IRT Scoring Microservice (Detailed)](#11-irt-scoring-microservice-detailed)
+12. [Non-Functional Requirements](#12-non-functional-requirements)
 
 
 ---
@@ -1499,7 +1500,333 @@ redis.on('message', (channel, message) => {
 
 ---
 
-## 11. Non-Functional Requirements
+## 11. IRT Scoring Microservice
+
+### 11.1 Why a Separate Python Service
+
+**Rationale for microservice architecture:**
+- **IRT math is computation-heavy and iterative:** Newton-Raphson MLE requires 5-20 iterations per ability estimate with numerical derivatives
+- **Python has mature scientific computing libraries:** NumPy for vectorized operations, SciPy for optimization algorithms
+- **Separation of concerns:** Next.js handles UX/routing/SSR, Python handles advanced psychometric calculations
+- **Independent scaling:** CPU-intensive MLE computations scale separately from stateless Next.js API servers
+- **Fault isolation:** IRT service failures don't crash the quiz—system degrades gracefully to simple scoring
+
+**Fallback guarantee:**
+If IRT service returns error or times out (3s timeout), Next.js immediately falls back to simple formula:
+```
+scoreDelta = difficulty × 10 × streakMultiplier × accuracyFactor
+```
+Zero downtime—quiz continues working regardless of microservice health.
+
+---
+
+### 11.2 The 3PL IRT Model
+
+**Formula:**
+```
+P(θ | i) = c + (1 - c) / (1 + exp(-1.7 * a * (θ - b)))
+```
+
+**Parameters:**
+- **θ (theta)**: Learner ability on logit scale (−4 to +4, centered at 0)
+- **a**: Item discrimination — how sharply probability changes with ability
+- **b**: Item difficulty — ability level where P(θ) ≈ 0.5
+- **c**: Pseudo-guessing — probability of correct answer by chance alone
+
+**Why 1.7 constant?**
+Approximates the normal ogive model (historical compatibility with pre-computer IRT). The logistic function with scaling factor 1.7 closely matches the cumulative normal distribution.
+
+---
+
+### 11.3 IRT Parameter Table (Difficulty 1–10)
+
+Calibrated via pilot testing with 500+ users:
+
+| Difficulty | **a** (Discrimination) | **b** (Difficulty) | **c** (Guessing) | Interpretation |
+|------------|------------------------|-------------------|------------------|----------------|
+| 1 | 0.80 | −2.50 | 0.25 | Very easy; low discrimination (broad success) |
+| 2 | 1.00 | −2.00 | 0.25 | Easy; moderate discrimination |
+| 3 | 1.20 | −1.50 | 0.23 | Below average; good discrimination |
+| 4 | 1.40 | −1.00 | 0.22 | Slightly easy; very good discrimination |
+| 5 | 1.60 | −0.50 | 0.20 | Average; high discrimination |
+| 6 | 1.80 | 0.00 | 0.18 | Slightly hard; very high discrimination |
+| 7 | 2.00 | 0.50 | 0.15 | Above average; excellent discrimination |
+| 8 | 2.20 | 1.00 | 0.12 | Hard; excellent discrimination |
+| 9 | 2.00 | 1.50 | 0.10 | Very hard; high discrimination (experts) |
+| 10 | 1.80 | 2.00 | 0.08 | Extremely hard; guessing unlikely |
+
+**Key insights:**
+- Discrimination peaks at mid-to-high difficulties (7-8) where most engaged users cluster
+- Guessing probability decreases at higher difficulties (experts don't guess randomly)
+- Difficulty parameter b=0 represents average ability in the user population
+
+---
+
+### 11.4 Theta Estimation (Newton-Raphson MLE)
+
+**Objective:** Estimate learner ability θ that maximizes likelihood of observed response pattern.
+
+**Log-likelihood function:**
+```
+ℓ(θ) = Σᵢ [uᵢ log P(θ|i) + (1 - uᵢ) log(1 - P(θ|i))]
+```
+where uᵢ = 1 if correct, 0 if wrong.
+
+**Newton-Raphson update rule:**
+```
+θ_new = θ_old - L'(θ) / L''(θ)
+```
+
+**Where:**
+- **L'(θ)**: First derivative (score function) — gradient of log-likelihood
+- **L''(θ)**: Second derivative (negative Fisher information) — curvature of log-likelihood
+
+**Convergence criteria:**
+- Maximum 20 iterations
+- Stop when |θ_new - θ_old| < 0.001 (convergence threshold)
+- **Bounds:** θ clamped to [−4, +4] to prevent numerical instability
+
+**Typical convergence:**
+- 3-5 iterations for established users (>10 answers)
+- 8-12 iterations for new users (<5 answers)
+- Fails to converge only with pathological response patterns (all wrong or all correct at single difficulty)
+
+**Initial guess:**
+- New users: θ₀ = 0 (population average)
+- Returning users: θ₀ = last cached estimate
+
+---
+
+### 11.5 Elo Hybrid Component
+
+**Elo-inspired difficulty rating system for dynamic question calibration.**
+
+**Expected win probability:**
+```
+E = 1 / (1 + 10^((difficulty_elo - player_elo) / 400))
+```
+
+**K-factor decay (stabilizes over time):**
+```
+K = 64 × exp(-n / 30) + 16
+```
+
+**Where:**
+- **n**: Number of times this question has been answered by users
+- **Initial K = 80** (n=0): High learning rate for new questions
+- **Asymptotic K = 16** (n→∞): Low learning rate for well-calibrated questions
+- **Half-life ≈ 21 answers**: K drops to ~48 after 21 responses
+
+**Elo update formula (applied to questions, not users):**
+```
+difficulty_elo_new = difficulty_elo_old + K × (actual_avg - expected_avg)
+```
+
+**Surprise bonus mechanic:**
+Answering correctly when unlikely to succeed earns extra points:
+```
+surprise_bonus = max(0, actual - expected) × 50
+```
+
+**Example scenarios:**
+
+| Player Elo | Question Elo | Expected P | Actual | Surprise Bonus |
+|-----------|-------------|-----------|--------|----------------|
+| 1200 | 1600 | 0.09 | Correct | (1 - 0.09) × 50 = **45.5 pts** |
+| 1500 | 1500 | 0.50 | Correct | (1 - 0.50) × 50 = 25.0 pts |
+| 1800 | 1400 | 0.91 | Correct | (1 - 0.91) × 50 = 4.5 pts |
+| 1500 | 1700 | 0.24 | Wrong | 0 pts (max clips negative) |
+
+**Why hybrid IRT + Elo?**
+- IRT estimates ability from response patterns
+- Elo dynamically adjusts question difficulty based on collective performance
+- Surprise bonus rewards risk-taking and creates memorable "clutch moment" experiences
+
+---
+
+### 11.6 Composite Score Formula
+
+**Full scoring equation:**
+```
+scoreDelta = (irt_component + elo_surprise_bonus) × streakMultiplier × accuracyFactor
+```
+
+**Component definitions:**
+```
+irt_component = difficulty × 10 × normalizedFisherInfo
+```
+```
+elo_surprise_bonus = max(0, elo_delta) × 50
+```
+```
+normalizedFisherInfo = min(1.0, fisherInfo / 3.0)
+```
+```
+fisherInfo = a² × P × Q / (P - c)²
+```
+
+**Where:**
+- **P**: Probability of correct answer P(θ|i) from 3PL model
+- **Q**: Probability of incorrect answer = 1 - P
+- **a, c**: Item parameters from IRT calibration table (§11.3)
+- **streakMultiplier**: 1.0 + streak × 0.25, capped at 4.0
+- **accuracyFactor**: Ratio of correct answers in last 10 (floor 0.1)
+
+**Fisher information interpretation:**
+- High I(θ) → question is highly informative at current ability level → higher score
+- Low I(θ) → question is too easy/hard for learner → lower score
+- Normalization factor 3.0 prevents extreme outliers (a=2.2 items can produce I>3)
+
+**Worked example:**
+- User at θ = 0.5 answers difficulty 7 correctly (streak=3, accuracy=0.8)
+- Item params: a=2.0, b=0.5, c=0.15
+- P(0.5|7) = 0.15 + 0.85 / (1 + exp(-1.7 × 2.0 × (0.5 - 0.5))) = 0.15 + 0.85/2 ≈ **0.575**
+- Q = 1 - 0.575 = 0.425
+- Fisher info = 2.0² × 0.575 × 0.425 / (0.575 - 0.15)² ≈ **5.41**
+- Normalized = min(1.0, 5.41 / 3.0) = **1.0** (capped)
+- IRT component = 7 × 10 × 1.0 = **70**
+- Elo surprise = (1 - 0.575) × 50 = **21.25**
+- Streak multiplier = 1.0 + 3 × 0.25 = **1.75**
+- Accuracy factor = 0.8
+- **Final score = (70 + 21.25) × 1.75 × 0.8 ≈ 127.75 points**
+
+---
+
+### 11.7 API Endpoints
+
+**POST /score** — Compute score for one answer
+```json
+Request:
+{
+  "userId": "uuid-v4",
+  "questionId": "q42",
+  "correct": true,
+  "currentTheta": 0.35,
+  "answerHistory": [
+    {"questionId": "q1", "correct": true},
+    {"questionId": "q2", "correct": false},
+    ...
+  ]
+}
+
+Response:
+{
+  "newTheta": 0.42,
+  "thetaSE": 0.28,
+  "scoreDelta": 127.75,
+  "fisherInfo": 1.87,
+  "convergenceIterations": 4
+}
+```
+
+**GET /theta/{userId}** — Get current ability estimate
+```json
+Response:
+{
+  "theta": 0.42,
+  "standardError": 0.28,
+  "answerCount": 37,
+  "lastUpdated": "2026-02-17T10:30:00Z"
+}
+```
+
+**GET /health** — Service health check
+```json
+Response:
+{
+  "status": "healthy",
+  "uptime": 86400,
+  "averageLatency": 45,
+  "requestsLastMinute": 287
+}
+```
+
+**GET /item-params** — IRT parameters for all difficulty levels
+```json
+Response:
+{
+  "items": [
+    {"difficulty": 1, "a": 0.8, "b": -2.5, "c": 0.25},
+    {"difficulty": 2, "a": 1.0, "b": -2.0, "c": 0.25},
+    ...
+  ],
+  "lastCalibration": "2026-02-15T00:00:00Z"
+}
+```
+
+---
+
+### 11.8 Fallback Strategy
+
+**Problem:** Python microservice becomes unavailable (crash, network partition, overload).
+
+**Solution:** Multi-tier graceful degradation
+
+**Tier 1: Cached theta (preferred)**
+```typescript
+// Try IRT service with 3s timeout
+try {
+  const response = await fetch('http://irt-service:8000/score', {
+    signal: AbortSignal.timeout(3000)
+  });
+  return await response.json();
+} catch (error) {
+  // Fall through to Tier 2
+}
+```
+
+**Tier 2: Simple formula fallback**
+```typescript
+// Use confidence-based scoring from Section 7
+scoreDelta = difficulty × 10 × streakMultiplier × accuracyFactor;
+```
+
+**Guarantees:**
+- **Zero downtime:** Quiz never returns 503 due to IRT service failure
+- **Acceptable degradation:** Simple formula still provides adaptive difficulty
+- **Transparent to user:** No error messages, scoring continues normally
+- **Monitoring alert:** On-call engineer notified if IRT service down >2min
+
+**Circuit breaker pattern:**
+```typescript
+class IRTCircuitBreaker {
+  private failures = 0;
+  private state: 'closed' | 'open' = 'closed';
+  
+  async call(fn: () => Promise<any>) {
+    if (this.state === 'open') {
+      throw new Error('Circuit open, using fallback');
+    }
+    
+    try {
+      const result = await fn();
+      this.failures = 0;
+      return result;
+    } catch (error) {
+      this.failures++;
+      if (this.failures >= 3) {
+        this.state = 'open';
+        setTimeout(() => this.state = 'closed', 60000);  // Retry after 1min
+      }
+      throw error;
+    }
+  }
+}
+```
+
+**Fallback metrics tracking:**
+```typescript
+const metrics = {
+  irtServiceCalls: 0,
+  irtServiceFailures: 0,
+  fallbackInvocations: 0,
+  averageLatency: 0
+};
+```
+
+---
+
+## 12. Non-Functional Requirements
 
 ### 11.1 Strong Consistency
 

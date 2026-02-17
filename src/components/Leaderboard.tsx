@@ -71,7 +71,7 @@ function Leaderboard({ userId, token }: { userId: string; token: string }) {
         <div
           key={entry.userId}
           className={`flex items-center gap-3 px-3 py-2.5 rounded-bb-md transition-colors ${isCurrentUser
-              ? "bg-indigo-900/30 border border-indigo-700"
+              ? "bb-accent-subtle border"
               : ""
             }`}
         >
@@ -176,7 +176,7 @@ function Leaderboard({ userId, token }: { userId: string; token: string }) {
             {currentUser && (
               <>
                 <div className="border-t border-bb-border my-2" />
-                <div className="flex items-center gap-3 px-3 py-2.5 rounded-bb-md bg-indigo-900/30 border border-indigo-700">
+                <div className="flex items-center gap-3 px-3 py-2.5 rounded-bb-md bb-accent-subtle border">
                   <span className="w-6 text-bb-sm font-medium tabular-nums text-center text-bb-muted">
                     {currentUser.rank}
                   </span>
