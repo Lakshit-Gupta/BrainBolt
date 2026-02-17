@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env*
+npm-debug.log
+README.md
+.dockerignore
+*.test.ts
+*.spec.ts
