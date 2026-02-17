@@ -137,6 +137,9 @@ export async function POST(request: NextRequest) {
       leaderboardRankScore,
       leaderboardRankStreak,
       sessionId: sessionId || null,
+      newDifficulty: response.userState.difficulty,
+      newStreak: response.userState.streak,
+      totalScore: response.userState.totalScore,
     },
     {
       headers: {

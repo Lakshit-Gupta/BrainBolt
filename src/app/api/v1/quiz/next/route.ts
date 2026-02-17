@@ -62,6 +62,9 @@ export async function GET(request: NextRequest) {
     {
       ...result,
       sessionId: sessionId || null,
+      currentScore: result.userState.totalScore,
+      currentStreak: result.userState.streak,
+      difficulty: result.userState.difficulty,
     },
     {
       headers: {

@@ -19,23 +19,23 @@ export default function StatsBar({
 
   return (
     <Card>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-4 gap-4 w-full">
         {/* Score */}
-        <div>
+        <div className="flex flex-col gap-1">
           <div className="text-bb-xs font-medium text-bb-muted uppercase tracking-wide">
             Score
           </div>
-          <div className="text-bb-2xl font-bold text-bb-text tabular-nums mt-1">
+          <div className="text-bb-2xl font-bold text-bb-text tabular-nums">
             {Math.round(score).toLocaleString()}
           </div>
         </div>
 
         {/* Streak */}
-        <div>
+        <div className="flex flex-col gap-1">
           <div className="text-bb-xs font-medium text-bb-muted uppercase tracking-wide">
             Streak
           </div>
-          <div className="flex items-baseline gap-2 mt-1">
+          <div className="flex items-baseline gap-2">
             <span className="text-bb-2xl font-bold text-bb-text tabular-nums">
               {streak}
             </span>
@@ -48,29 +48,27 @@ export default function StatsBar({
         </div>
 
         {/* Difficulty */}
-        <div>
+        <div className="flex flex-col gap-1" style={{ position: 'relative', isolation: 'isolate', overflow: 'hidden' }}>
           <div className="text-bb-xs font-medium text-bb-muted uppercase tracking-wide">
             Difficulty
           </div>
-          <div className="flex items-center gap-2 mt-2">
-            <div className="flex-1 h-2 bg-bb-elevated rounded-full overflow-hidden">
-              <div
-                className="h-full bg-bb-accent rounded-full transition-all duration-500"
-                style={{ width: `${(difficulty / 10) * 100}%` }}
-              />
-            </div>
-            <span className="text-bb-sm font-medium text-bb-text tabular-nums w-8 text-right">
-              {difficulty}/10
-            </span>
+          <div className="text-bb-2xl font-bold text-bb-text tabular-nums">
+            {difficulty}
+          </div>
+          <div style={{ overflow: 'hidden', borderRadius: 4, height: 4, width: '100%', marginTop: 4 }} className="bg-bb-elevated">
+            <div
+              className="h-full bg-bb-accent transition-all duration-500"
+              style={{ width: `${(difficulty / 10) * 100}%` }}
+            />
           </div>
         </div>
 
         {/* Best Streak */}
-        <div>
+        <div className="flex flex-col gap-1">
           <div className="text-bb-xs font-medium text-bb-muted uppercase tracking-wide">
             Best Streak
           </div>
-          <div className="text-bb-2xl font-bold text-bb-text tabular-nums mt-1">
+          <div className="text-bb-2xl font-bold text-bb-text tabular-nums">
             {maxStreak}
           </div>
         </div>

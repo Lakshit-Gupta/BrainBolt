@@ -515,6 +515,8 @@ Authorization: Bearer {token}
 }
 ```
 
+**Note:** The streak leaderboard ranks by maxStreak (all-time best streak) rather than current active streak. This is an intentional design decision — current streak resets on wrong answers making it highly volatile for leaderboard purposes. maxStreak provides a stable, meaningful competitive metric.
+
 **Errors:**
 - `401 Unauthorized`
 
